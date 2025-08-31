@@ -1,4 +1,4 @@
-# Teste para forçar a atualizaçãoimport logging
+import logging
 import os
 from telegram import Update
 from telegram.ext import (
@@ -63,27 +63,19 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 # =========================================================================
-# PARTE 2: FUNÇÃO MAIN COM LOGS DE DEPURAÇÃO
+# PARTE 2: FUNÇÃO MAIN
 # =========================================================================
 
 def main() -> None:
     """Inicia o bot e o configura para rodar com webhook."""
 
-    print("--- INICIANDO PROCESSO DE DEPURAÇÃO ---")
-
-    # 1. VERIFICA O TOKEN DO BOT
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
-    if TOKEN:
-        # Por segurança, não vamos imprimir o token todo, só o início.
-        print(f"✅ Variável TELEGRAM_TOKEN encontrada! Começa com: {TOKEN[:5]}...")
-    else:
-        print("❌ ERRO CRÍTICO: Variável de ambiente TELEGRAM_TOKEN não foi encontrada ou está vazia!")
+    if not TOKEN:
+        logger.critical("Variável de ambiente TELEGRAM_TOKEN não configurada! O bot não pode iniciar.")
         raise ValueError("Variável de ambiente TELEGRAM_TOKEN não configurada! O bot não pode iniciar.")
 
-    # 2. CRIA A APLICAÇÃO
     application = Application.builder().token(TOKEN).build()
 
-    # 3. CONFIGURA O CONVERSATIONHANDLER DE CADASTRO
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("cadastrar", cadastrar)],
         states={
@@ -98,20 +90,14 @@ def main() -> None:
         await update.message.reply_text("Olá! Use /cadastrar para iniciar seu cadastro.")
     application.add_handler(CommandHandler("start", start))
 
-    # 4. VERIFICA AS VARIÁVEIS DO RENDER
     PORT = int(os.environ.get('PORT', '8443'))
     WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
     
-    print(f"Porta que o Render forneceu: {PORT}")
-    
-    if WEBHOOK_URL:
-        print(f"✅ Webhook URL encontrada: {WEBHOOK_URL}")
-    else:
-        print("❌ ERRO CRÍTICO: Variável de ambiente RENDER_EXTERNAL_URL não foi encontrada!")
+    if not WEBHOOK_URL:
+        logger.critical("Variável de ambiente RENDER_EXTERNAL_URL não encontrada!")
         raise ValueError("Variável de ambiente RENDER_EXTERNAL_URL não encontrada!")
 
-    # 5. INICIA O BOT EM MODO WEBHOOK
-    print("--- FIM DA DEPURAÇÃO. Iniciando o bot agora... ---")
+    logger.info("Iniciando o bot com webhook...")
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
