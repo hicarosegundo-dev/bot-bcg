@@ -99,4 +99,4 @@ def main() -> None:
     # 4. CONFIGURA O WEBHOOK PARA O RENDER
     # O Render nos informa a porta e a URL através de variáveis de ambiente.
     PORT = int(os.environ.get('PORT', '8443'))
-    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL
+    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
