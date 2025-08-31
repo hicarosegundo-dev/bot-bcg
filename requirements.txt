@@ -1,2 +1,5 @@
 python-telegram-bot[webhooks]
+gspread
+oauth2client
+pdfplumber
 
