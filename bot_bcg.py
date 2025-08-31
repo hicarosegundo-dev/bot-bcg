@@ -42,15 +42,12 @@ async def receber_nome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def receber_matricula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Salva a matrícula e encerra a conversa."""
-    # Aqui é onde você salvaria os dados em um banco de dados real
-    # Por exemplo: salvar_usuario(chat_id=update.effective_user.id, nome=context.user_data['nome'], matricula=update.message.text)
-    
     logger.info("Matrícula do usuário %s: %s", update.effective_user.first_name, update.message.text)
 
     await update.message.reply_text(
         f"Cadastro concluído com sucesso!\n\n"
         f"<b>Nome:</b> {context.user_data['nome']}\n"
-        f"<b>Matrícula:</b> {update.message.text}\n\n" # Usando o texto direto da mensagem
+        f"<b>Matrícula:</b> {update.message.text}\n\n"
         f"Obrigado!",
         parse_mode='HTML'
     )
@@ -66,15 +63,21 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 # =========================================================================
-# PARTE 2: ESTRUTURA PRINCIPAL E INICIALIZAÇÃO COM WEBHOOK
+# PARTE 2: FUNÇÃO MAIN COM LOGS DE DEPURAÇÃO
 # =========================================================================
 
 def main() -> None:
     """Inicia o bot e o configura para rodar com webhook."""
-    
-    # 1. PEGA O TOKEN DO BOT (deve ser configurado no Render)
+
+    print("--- INICIANDO PROCESSO DE DEPURAÇÃO ---")
+
+    # 1. VERIFICA O TOKEN DO BOT
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
-    if not TOKEN:
+    if TOKEN:
+        # Por segurança, não vamos imprimir o token todo, só o início.
+        print(f"✅ Variável TELEGRAM_TOKEN encontrada! Começa com: {TOKEN[:5]}...")
+    else:
+        print("❌ ERRO CRÍTICO: Variável de ambiente TELEGRAM_TOKEN não foi encontrada ou está vazia!")
         raise ValueError("Variável de ambiente TELEGRAM_TOKEN não configurada! O bot não pode iniciar.")
 
     # 2. CRIA A APLICAÇÃO
@@ -91,12 +94,30 @@ def main() -> None:
     )
     application.add_handler(conv_handler)
     
-    # Adiciona um comando de start simples para o bot responder a algo
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Olá! Use /cadastrar para iniciar seu cadastro.")
     application.add_handler(CommandHandler("start", start))
 
-    # 4. CONFIGURA O WEBHOOK PARA O RENDER
-    # O Render nos informa a porta e a URL através de variáveis de ambiente.
+    # 4. VERIFICA AS VARIÁVEIS DO RENDER
     PORT = int(os.environ.get('PORT', '8443'))
     WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
+    
+    print(f"Porta que o Render forneceu: {PORT}")
+    
+    if WEBHOOK_URL:
+        print(f"✅ Webhook URL encontrada: {WEBHOOK_URL}")
+    else:
+        print("❌ ERRO CRÍTICO: Variável de ambiente RENDER_EXTERNAL_URL não foi encontrada!")
+        raise ValueError("Variável de ambiente RENDER_EXTERNAL_URL não encontrada!")
+
+    # 5. INICIA O BOT EM MODO WEBHOOK
+    print("--- FIM DA DEPURAÇÃO. Iniciando o bot agora... ---")
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=WEBHOOK_URL,
+        set_webhook=True
+    )
+
+if __name__ == "__main__":
+    main()
