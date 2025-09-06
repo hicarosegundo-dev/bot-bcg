@@ -132,95 +132,111 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
-async def verificar_mensagens(update: Update, context: ContextTypes.DEFAULT_TYPE, texto_completo: str) -> None:
-    nomes_encontrados_com_detalhes = {}
-    header_match = re.search(r'BCG nº \d+.*', texto_completo, re.IGNORECASE)
-    header_simples = header_match.group(0).strip() if header_match else "uma publicação"
-
+# MODIFICADO: Esta função agora só busca, não envia notificações
+def buscar_nomes_no_texto(texto_pagina: str, header: str):
+    """Busca usuários no texto de uma única página e retorna um dicionário de notificações."""
+    notificacoes_encontradas = {}
+    
     for nome_usuario, detalhes_usuario in usuarios_dados_completos.items():
+        # Evita notificar o mesmo usuário mais de uma vez
+        if detalhes_usuario['id'] in [v['user_id'] for v in notificacoes_encontradas.values()]:
+            continue
+            
         termos = [detalhes_usuario["pm"], detalhes_usuario["nome_completo"], detalhes_usuario["matricula"]]
         termos_validos = [t for t in termos if t]
         if not termos_validos:
             continue
+            
         regex_termos = '|'.join(re.escape(t) for t in termos_validos)
-        if re.search(r'\b(' + regex_termos + r')\b', texto_completo, re.IGNORECASE):
-            pos = re.search(r'\b(' + regex_termos + r')\b', texto_completo, re.IGNORECASE).start()
+        if re.search(r'\b(' + regex_termos + r')\b', texto_pagina, re.IGNORECASE):
+            pos = re.search(r'\b(' + regex_termos + r')\b', texto_pagina, re.IGNORECASE).start()
             start_pos = max(0, pos - 150)
-            end_pos = min(len(texto_completo), pos + 150)
-            trecho_final = "..." + texto_completo[start_pos:end_pos].strip() + "..."
+            end_pos = min(len(texto_pagina), pos + 150)
+            trecho_final = "..." + texto_pagina[start_pos:end_pos].strip() + "..."
+            
             mensagem_final = (
                 f"Olá, {detalhes_usuario['nome_completo']}!\n\n"
-                f"Você foi mencionado(a) em {header_simples}.\n\n"
+                f"Você foi mencionado(a) em {header}.\n\n"
                 f"Trecho da citação:\n{trecho_final}\n\n"
                 f"Acesse https://sisbol.pm.ce.gov.br/login_bcg/ para ver na íntegra."
             )
+            
             if len(mensagem_final) > MAX_MESSAGE_LENGTH:
                 mensagem_final = mensagem_final[:MAX_MESSAGE_LENGTH - 4] + "..."
-            nomes_encontrados_com_detalhes[detalhes_usuario['id']] = mensagem_final
+            
+            notificacoes_encontradas[detalhes_usuario['id']] = {
+                "user_id": detalhes_usuario['id'],
+                "nome": detalhes_usuario['nome_completo'],
+                "mensagem": mensagem_final
+            }
+            
+    return notificacoes_encontradas
 
-    if not nomes_encontrados_com_detalhes:
-        await update.message.reply_text("Análise concluída. Nenhum usuário cadastrado foi encontrado na publicação.")
-        return
-
-    nomes_notificados = []
-    for user_id, mensagem in nomes_encontrados_com_detalhes.items():
-        try:
-            await context.bot.send_message(chat_id=user_id, text=mensagem)
-            for nome, detalhes in usuarios_dados_completos.items():
-                if detalhes['id'] == user_id:
-                    nomes_notificados.append(nome)
-                    break
-        except Exception as e:
-            logger.error(f"Falha ao enviar notificação para ID {user_id}: {e}")
-    if nomes_notificados:
-        await update.message.reply_text(f"Notificações enviadas para: {', '.join(nomes_notificados)}.")
-
-
+# MODIFICADO: Lógica de processamento de PDF página por página
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ESTA É A VERSÃO COM MENSAGENS DE DEPURAÇÃO (NARRADOR)"""
-    await update.message.reply_text("Recebi o PDF. Iniciando download...")
+    await update.message.reply_text("Recebi o PDF. Analisando página por página, isso pode levar um tempo...")
     try:
         pdf_file = await context.bot.get_file(update.message.document.file_id)
         pdf_bytes = await pdf_file.download_as_bytearray()
-        await update.message.reply_text("Download concluído. Iniciando extração de texto...")
-
-        texto_completo = ""
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            await update.message.reply_text(f"PDF aberto. O documento tem {len(pdf.pages)} página(s).")
-            for i, page in enumerate(pdf.pages):
-                texto_completo += page.extract_text() or ""
-                # Avisa a cada 5 páginas para não sobrecarregar com muitas mensagens
-                if (i + 1) % 5 == 0 and len(pdf.pages) > 5:
-                    await update.message.reply_text(f"Processando... {i + 1} páginas lidas.")
         
-        await update.message.reply_text("Extração de texto finalizada.")
+        master_notificacoes = {}
+        texto_header = ""
+        
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            # Pega o cabeçalho da primeira página
+            primeira_pagina_texto = pdf.pages[0].extract_text() or ""
+            header_match = re.search(r'BCG nº \d+.*', primeira_pagina_texto, re.IGNORECASE)
+            texto_header = header_match.group(0).strip() if header_match else "uma publicação"
 
-        if texto_completo.strip():
-            await update.message.reply_text("Texto encontrado. Verificando nomes...")
-            await verificar_mensagens(update, context, texto_completo=texto_completo)
-        else:
-            await update.message.reply_text("Análise finalizada. Não foi possível extrair conteúdo textual do PDF. Ele provavelmente é uma imagem.")
+            # Processa página por página
+            for i, page in enumerate(pdf.pages):
+                logger.info(f"Processando página {i+1}/{len(pdf.pages)}...")
+                texto_da_pagina = page.extract_text() or ""
+                if texto_da_pagina:
+                    novas_notificacoes = buscar_nomes_no_texto(texto_da_pagina, texto_header)
+                    # Adiciona novas notificações, evitando duplicatas
+                    for user_id, notificacao in novas_notificacoes.items():
+                        if user_id not in master_notificacoes:
+                            master_notificacoes[user_id] = notificacao
+
+        if not master_notificacoes:
+            await update.message.reply_text("Análise concluída. Nenhum usuário cadastrado foi encontrado na publicação.")
+            return
+
+        # Envia as notificações consolidadas
+        nomes_notificados = []
+        for user_id, notificacao in master_notificacoes.items():
+            try:
+                await context.bot.send_message(chat_id=user_id, text=notificacao['mensagem'])
+                nomes_notificados.append(notificacao['nome'])
+            except Exception as e:
+                logger.error(f"Falha ao enviar notificação para ID {user_id}: {e}")
+        
+        if nomes_notificados:
+            await update.message.reply_text(f"Análise concluída. Notificações enviadas para: {', '.join(nomes_notificados)}.")
 
     except Exception as e:
         logger.error(f"Erro detalhado ao processar PDF: {e}")
-        await update.message.reply_text(f"Ocorreu um erro crítico ao processar o arquivo PDF. Detalhe: {e}")
-
+        await update.message.reply_text(f"Ocorreu um erro crítico ao processar o arquivo PDF.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Esta função agora só lida com saudações para mostrar o menu
     if update.message.text:
         greetings = ['oi', 'olá', 'bom dia', 'boa tarde', 'boa noite']
         if any(greeting in update.message.text.lower() for greeting in greetings):
              await start(update, context)
-             return
-        await verificar_mensagens(update, context, texto_completo=update.message.text)
 
 # --- FUNÇÃO PRINCIPAL (MAIN) ---
 
 def main() -> None:
+    """Inicia o bot no modo Polling para o servidor."""
+    
     carregar_usuarios_da_planilha()
+    
     if not TOKEN:
         logger.critical("Variável de ambiente TELEGRAM_TOKEN não configurada!")
         return
+
     application = Application.builder().token(TOKEN).build()
     
     conv_handler = ConversationHandler(
@@ -235,20 +251,11 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Removemos o handler de texto genérico para evitar que ele analise qualquer mensagem
+    # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    PORT = int(os.environ.get('PORT', 8080))
-    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
-    if not WEBHOOK_URL:
-        logger.error("Variável de ambiente RENDER_EXTERNAL_URL não encontrada.")
-        return
-        
-    logger.info(f"Iniciando webhook na porta {PORT}")
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=WEBHOOK_URL
-    )
+    logger.info("Iniciando o bot no modo polling...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
